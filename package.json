@@ -1,0 +1,10 @@
+{
+  "name": "shelly-tp350-iobroker-gateway",
+  "version": "0.1.0",
+  "private": true,
+  "description": "Bridge ThermoPro TP350/TP350S BLE advertisements through Shelly scripts into ioBroker.shelly via synthetic BTHome v2.",
+  "scripts": {
+    "test": "node tests/smoke-test.js"
+  },
+  "license": "MIT"
+}
