@@ -18,6 +18,12 @@ const CONFIG = {
     // Republish unchanged values periodically so receiver/RSSI timestamps stay fresh.
     heartbeatIntervalSeconds: 60,
 
+    // Emit one compact gateway/sensor diagnostic summary at this interval.
+    // This is intentionally much quieter than the raw BLE sniffer.
+    diagnostics: true,
+    diagnosticIntervalSeconds: 60,
+
+    // Emit one line for every successful TP350 MQTT publication.
     debug: false
 };
 
@@ -128,7 +134,16 @@ function getSensorState(mac) {
         sensors[mac] = {
             lastRawTemperature: null,
             lastHumidity: null,
+            lastSeen: null,
+            lastPublishAttempt: null,
             lastPublish: -CONFIG.heartbeatIntervalSeconds,
+            lastPublishReason: null,
+            lastRssi: null,
+            advertisementCount: 0,
+            publishAttemptCount: 0,
+            publishSuccessCount: 0,
+            mqttDisconnectedSkipCount: 0,
+            mqttQueueFailureCount: 0,
             packetId: 0
         };
     }
@@ -137,7 +152,7 @@ function getSensorState(mac) {
 }
 
 
-function shouldPublish(sensor, values) {
+function getPublishReason(sensor, values) {
     let secondsSinceLastPublish =
         nowSeconds() - sensor.lastPublish;
 
@@ -145,7 +160,7 @@ function shouldPublish(sensor, values) {
         sensor.lastRawTemperature === null ||
         sensor.lastHumidity === null
     ) {
-        return true;
+        return 'first';
     }
 
     let changed =
@@ -156,13 +171,17 @@ function shouldPublish(sensor, values) {
         changed &&
         secondsSinceLastPublish >= CONFIG.minChangeIntervalSeconds
     ) {
-        return true;
+        return 'changed';
     }
 
-    return (
+    if (
         secondsSinceLastPublish >=
         CONFIG.heartbeatIntervalSeconds
-    );
+    ) {
+        return 'heartbeat';
+    }
+
+    return null;
 }
 
 
@@ -190,8 +209,12 @@ function buildBTHomePayload(sensor, values) {
 }
 
 
-function publishSensor(result, sensor, values) {
+function publishSensor(result, sensor, values, reason) {
+    sensor.lastPublishAttempt = nowSeconds();
+    sensor.publishAttemptCount += 1;
+
     if (!MQTT.isConnected()) {
+        sensor.mqttDisconnectedSkipCount += 1;
         return;
     }
 
@@ -208,14 +231,24 @@ function publishSensor(result, sensor, values) {
         payload: payload
     };
 
-    MQTT.publish(
+    let publishResult = MQTT.publish(
         SHELLY_ID + '/events/ble',
         JSON.stringify(message)
     );
 
+    // Current Shelly firmware returns true when the message was queued and
+    // false when it could not be queued. Older firmware documented no return
+    // value, so only an explicit false is treated as a queue failure.
+    if (publishResult === false) {
+        sensor.mqttQueueFailureCount += 1;
+        return;
+    }
+
     sensor.lastRawTemperature = values.rawTemperature;
     sensor.lastHumidity = values.humidity;
     sensor.lastPublish = nowSeconds();
+    sensor.lastPublishReason = reason;
+    sensor.publishSuccessCount += 1;
 
     if (CONFIG.debug) {
         console.log(
@@ -227,6 +260,8 @@ function publishSensor(result, sensor, values) {
             values.humidity +
             ' % / RSSI ' +
             result.rssi +
+            ' / reason=' +
+            reason +
             ' -> ' +
             payload
         );
@@ -263,11 +298,86 @@ function bleScanCallback(event, result) {
     let mac = result.addr.toLowerCase();
     let sensor = getSensorState(mac);
 
-    if (!shouldPublish(sensor, values)) {
+    sensor.lastSeen = nowSeconds();
+    sensor.lastRssi = result.rssi;
+    sensor.advertisementCount += 1;
+
+    let reason = getPublishReason(sensor, values);
+
+    if (reason === null) {
         return;
     }
 
-    publishSensor(result, sensor, values);
+    publishSensor(result, sensor, values, reason);
+}
+
+
+function formatAge(timestamp, now) {
+    if (timestamp === null) {
+        return 'never';
+    }
+
+    let age = now - timestamp;
+
+    if (age < 0) {
+        age = 0;
+    }
+
+    return age.toFixed(1) + 's';
+}
+
+
+function logDiagnostics() {
+    if (!CONFIG.diagnostics) {
+        return;
+    }
+
+    let now = nowSeconds();
+    let macs = Object.keys(sensors).sort();
+
+    console.log(
+        'TP350 DIAG gateway=' +
+        SHELLY_ID +
+        ' mqtt=' +
+        MQTT.isConnected() +
+        ' scan=' +
+        BLE.Scanner.isRunning() +
+        ' sensors=' +
+        macs.length
+    );
+
+    for (let i = 0; i < macs.length; i++) {
+        let mac = macs[i];
+        let sensor = sensors[mac];
+
+        console.log(
+            'TP350 DIAG mac=' +
+            mac +
+            ' seen=' +
+            formatAge(sensor.lastSeen, now) +
+            ' publish=' +
+            formatAge(
+                sensor.publishSuccessCount > 0 ? sensor.lastPublish : null,
+                now
+            ) +
+            ' attempt=' +
+            formatAge(sensor.lastPublishAttempt, now) +
+            ' adv=' +
+            sensor.advertisementCount +
+            ' attempts=' +
+            sensor.publishAttemptCount +
+            ' ok=' +
+            sensor.publishSuccessCount +
+            ' mqttSkip=' +
+            sensor.mqttDisconnectedSkipCount +
+            ' queueFail=' +
+            sensor.mqttQueueFailureCount +
+            ' rssi=' +
+            sensor.lastRssi +
+            ' reason=' +
+            (sensor.lastPublishReason || 'none')
+        );
+    }
 }
 
 
@@ -321,9 +431,19 @@ function init() {
 
     BLE.Scanner.Subscribe(bleScanCallback);
 
+    if (CONFIG.diagnostics) {
+        Timer.set(
+            CONFIG.diagnosticIntervalSeconds * 1000,
+            true,
+            logDiagnostics
+        );
+    }
+
     console.log(
         'TP350 ioBroker gateway active; scriptVersion=' +
-        CONFIG.ioBrokerShellyScriptVersion
+        CONFIG.ioBrokerShellyScriptVersion +
+        '; diagnostics=' +
+        CONFIG.diagnostics
     );
 }
 
