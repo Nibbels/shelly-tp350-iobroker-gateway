@@ -20,7 +20,7 @@ const CONFIG = {
 
     // Emit one compact gateway/sensor diagnostic summary at this interval.
     // This is intentionally much quieter than the raw BLE sniffer.
-    diagnostics: true,
+    diagnostics: false,
     diagnosticIntervalSeconds: 60,
 
     // Emit one line for every successful TP350 MQTT publication.
