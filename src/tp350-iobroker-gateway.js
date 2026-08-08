@@ -420,7 +420,7 @@ function init() {
     // submit its own scan request; requests are merged by the device.
     let scanner = BLE.Scanner.Start({
         duration_ms: BLE.Scanner.INFINITE_SCAN,
-        active: true
+        active: false
     });
 
     if (!scanner) {
