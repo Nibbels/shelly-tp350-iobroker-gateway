@@ -333,7 +333,9 @@ function logDiagnostics() {
     }
 
     let now = nowSeconds();
-    let macs = Object.keys(sensors).sort();
+    // Shelly's mJS Array implementation does not provide Array.prototype.sort().
+    // Diagnostic ordering is irrelevant, so iterate Object.keys() as returned.
+    let macs = Object.keys(sensors);
 
     console.log(
         'TP350 DIAG gateway=' +
