@@ -22,8 +22,12 @@ const CONFIG = {
 };
 
 let SHELLY_ID = undefined;
-let uptimeSeconds = 0;
 let sensors = {};
+
+
+function nowSeconds() {
+    return Shelly.getUptimeMs() / 1000;
+}
 
 
 function byteToHex(value) {
@@ -135,7 +139,7 @@ function getSensorState(mac) {
 
 function shouldPublish(sensor, values) {
     let secondsSinceLastPublish =
-        uptimeSeconds - sensor.lastPublish;
+        nowSeconds() - sensor.lastPublish;
 
     if (
         sensor.lastRawTemperature === null ||
@@ -211,7 +215,7 @@ function publishSensor(result, sensor, values) {
 
     sensor.lastRawTemperature = values.rawTemperature;
     sensor.lastHumidity = values.humidity;
-    sensor.lastPublish = uptimeSeconds;
+    sensor.lastPublish = nowSeconds();
 
     if (CONFIG.debug) {
         console.log(
@@ -322,15 +326,6 @@ function init() {
         CONFIG.ioBrokerShellyScriptVersion
     );
 }
-
-
-Timer.set(
-    1000,
-    true,
-    function () {
-        uptimeSeconds += 1;
-    }
-);
 
 
 Shelly.call(
